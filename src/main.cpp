@@ -155,7 +155,7 @@ UniversalTelegramBot* bot = NULL;
 unsigned long lastTelegramCheck = 0;
 const unsigned long TELEGRAM_INTERVAL = 3000;
 
-const String kbdMarkup = "[[\"📊 Стан\", \"📈 Звіт\"]]";
+const String kbdMarkup = "[[\"📊 Стан\", \"📅 Звіт сьогодні\"], [\"📆 Звіт за 3 дні\", \"🗓 Звіт за 7 днів\"]]";
 
 String formatDuration(uint32_t sec);
 String formatTime(time_t t);
@@ -370,7 +370,7 @@ bool sendToAllChats(String text) {
     String chat = chats.substring(start, end);
     chat.trim();
     if (chat.length() > 0) {
-      if (bot->sendMessage(chat, text, "HTML")) anySent = true;
+      if (bot->sendMessageWithReplyKeyboard(chat, text, "HTML", kbdMarkup, true)) anySent = true;
     }
     start = end + 1;
     end = chats.indexOf(',', start);
@@ -378,7 +378,7 @@ bool sendToAllChats(String text) {
   String lastChat = chats.substring(start);
   lastChat.trim();
   if (lastChat.length() > 0) {
-    if (bot->sendMessage(lastChat, text, "HTML")) anySent = true;
+    if (bot->sendMessageWithReplyKeyboard(lastChat, text, "HTML", kbdMarkup, true)) anySent = true;
   }
   return anySent;
 }
@@ -409,8 +409,30 @@ String generateReportText(int days) {
   if (now < 1000000000) {
     return "⚠️ Неможливо сформувати звіт: годинник пристрою ще не синхронізовано з Інтернетом.";
   }
-  int64_t secondsBack = (int64_t)days * 86400LL;
-  time_t filterStart = (now > secondsBack) ? (time_t)(now - secondsBack) : 0;
+
+  struct tm tmNow;
+  localtime_r(&now, &tmNow);
+
+  // Обчислення початку періоду від 00:00:00 відповідного дня
+  struct tm tmStart = tmNow;
+  if (days <= 1) {
+    // Сьогодні з 00:00:00 по поточний момент
+    tmStart.tm_hour = 0;
+    tmStart.tm_min = 0;
+    tmStart.tm_sec = 0;
+  } else {
+    // Сьогодні та попередні (days - 1) діб від 00:00:00
+    tmStart.tm_mday -= (days - 1);
+    tmStart.tm_hour = 0;
+    tmStart.tm_min = 0;
+    tmStart.tm_sec = 0;
+  }
+  time_t filterStart = mktime(&tmStart);
+  if (filterStart == (time_t)-1 || filterStart > now) {
+    int64_t secondsBack = (int64_t)days * 86400LL;
+    filterStart = (now > secondsBack) ? (time_t)(now - secondsBack) : 0;
+  }
+
   uint32_t totalTimeOn = 0, totalTimeOff = 0, outagesCount = 0;
 
   for (int i = 0; i < logCount; i++) {
@@ -445,12 +467,39 @@ String generateReportText(int days) {
   uint32_t totalTracked = totalTimeOn + totalTimeOff;
   float sla = totalTracked > 0 ? ((float)totalTimeOn / totalTracked) * 100.0 : 0.0;
 
-  String rep = "📊 <b>ЗВІТ ЕНЕРГОМЕРЕЖІ ЗА " + String(days) + (days == 1 ? " ДЕНЬ" : " ДНІВ") + "</b>\n";
-  rep += "📍 <b>Локація:</b> " + escapeHtml(config.locationName) + "\n\n";
+  char timeBuf[16];
+  snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", tmNow.tm_hour, tmNow.tm_min);
+
+  String header;
+  String periodInfo;
+
+  if (days <= 1) {
+    header = "📊 <b>ЗВІТ ЗА СЬОГОДНІ</b>\n";
+    periodInfo = "🕒 <b>Період:</b> з 00:00 по " + String(timeBuf) + "\n";
+  } else if (days == 3) {
+    header = "📊 <b>ЗВІТ ЗА 3 ДНІ</b>\n";
+    char pBuf[64];
+    struct tm tmRange;
+    localtime_r(&filterStart, &tmRange);
+    snprintf(pBuf, sizeof(pBuf), "%02d.%02d — %02d.%02d (до %s)", tmRange.tm_mday, tmRange.tm_mon + 1, tmNow.tm_mday, tmNow.tm_mon + 1, timeBuf);
+    periodInfo = "🕒 <b>Період:</b> " + String(pBuf) + "\n";
+  } else {
+    header = "📊 <b>ЗВІТ ЗА 7 ДНІВ (ТИЖДЕНЬ)</b>\n";
+    char pBuf[64];
+    struct tm tmRange;
+    localtime_r(&filterStart, &tmRange);
+    snprintf(pBuf, sizeof(pBuf), "%02d.%02d — %02d.%02d (до %s)", tmRange.tm_mday, tmRange.tm_mon + 1, tmNow.tm_mday, tmNow.tm_mon + 1, timeBuf);
+    periodInfo = "🕒 <b>Період:</b> " + String(pBuf) + "\n";
+  }
+
+  String rep = header;
+  rep += "📍 <b>Локація:</b> " + escapeHtml(config.locationName) + "\n";
+  rep += periodInfo + "\n";
   rep += "🟢 <b>Час зі світлом:</b> " + formatDuration(totalTimeOn) + "\n";
   rep += "🔴 <b>Час без світла:</b> " + formatDuration(totalTimeOff) + "\n";
   rep += "⚡ <b>Кількість відключень:</b> " + String(outagesCount) + "\n";
   rep += "📈 <b>Індекс SLA (наявність):</b> " + String(sla, 1) + "%\n";
+
   return rep;
 }
 
@@ -464,7 +513,9 @@ void handleTelegramCommands() {
         continue;
       }
       String text = bot->messages[i].text;
-      if (text == "/start" || text == "Стан" || text == "📊 Стан") {
+      text.trim();
+
+      if (text == "/start" || text == "Стан" || text == "📊 Стан" || text == "/status") {
         time_t now = time(NULL);
         uint32_t durSec = 0;
         if (now > 1000000000 && lastStateChangeTime > 1000000000) {
@@ -477,13 +528,15 @@ void handleTelegramCommands() {
         reply += "⏳ <b>Тривалість поточного стану:</b> " + formatDuration(durSec) + "\n";
         reply += "🕒 <b>Останнє перемикання:</b> " + formatTime(lastStateChangeTime) + "\n";
         bot->sendMessageWithReplyKeyboard(chat_id, reply, "HTML", kbdMarkup, true);
-      } else if (text == "/report" || text == "Звіт" || text == "📈 Звіт") {
-        String rep = generateReportText(1);
-        rep += "\n\n<i>Для детальнішого періоду використовуйте команди: /report3 або /report7</i>";
-        bot->sendMessageWithReplyKeyboard(chat_id, rep, "HTML", kbdMarkup, true);
-      } else if (text == "/report3") {
+      } else if (text == "/report" || text == "/today" || text == "Звіт" || text == "📈 Звіт" || 
+                 text == "Звіт сьогодні" || text == "📅 Звіт сьогодні" || text == "Звіт за сьогодні" || text == "Сьогодні") {
+        bot->sendMessageWithReplyKeyboard(chat_id, generateReportText(1), "HTML", kbdMarkup, true);
+      } else if (text == "/report3" || text == "Звіт за 3 дні" || text == "📆 Звіт за 3 дні" || text == "За 3 дні" || text == "3 дні") {
         bot->sendMessageWithReplyKeyboard(chat_id, generateReportText(3), "HTML", kbdMarkup, true);
-      } else if (text == "/report7") {
+      } else if (text == "/report7" || text == "/week" || text == "Звіт за 7 днів" || text == "🗓 Звіт за 7 днів" || 
+                 text == "🗓️ Звіт за 7 днів" || text == "Звіт за тиждень" || text == "🗓 Звіт за тиждень" || 
+                 text == "Звіт за неділю" || text == "🗓 Звіт за неділю" || text == "За 7 днів" || text == "За тиждень" || 
+                 text == "За неділю" || text == "7 днів" || text == "Тиждень") {
         bot->sendMessageWithReplyKeyboard(chat_id, generateReportText(7), "HTML", kbdMarkup, true);
       }
     }
