@@ -155,7 +155,7 @@ UniversalTelegramBot* bot = NULL;
 unsigned long lastTelegramCheck = 0;
 const unsigned long TELEGRAM_INTERVAL = 3000;
 
-const String kbdMarkup = "[[\"📊 Стан\", \"📅 Звіт сьогодні\"], [\"📆 Звіт за 3 дні\", \"🗓 Звіт за 7 днів\"]]";
+const String kbdMarkup = "[[\"📊 Стан\", \"📅 Звіт сьогодні\"], [\"📈 Звіт за 3 дні\", \"🗓 Звіт за 7 днів\"]]";
 
 String formatDuration(uint32_t sec);
 String formatTime(time_t t);
@@ -420,12 +420,14 @@ String generateReportText(int days) {
     tmStart.tm_hour = 0;
     tmStart.tm_min = 0;
     tmStart.tm_sec = 0;
+    tmStart.tm_isdst = -1;
   } else {
     // Сьогодні та попередні (days - 1) діб від 00:00:00
     tmStart.tm_mday -= (days - 1);
     tmStart.tm_hour = 0;
     tmStart.tm_min = 0;
     tmStart.tm_sec = 0;
+    tmStart.tm_isdst = -1;
   }
   time_t filterStart = mktime(&tmStart);
   if (filterStart == (time_t)-1 || filterStart > now) {
@@ -481,14 +483,14 @@ String generateReportText(int days) {
     char pBuf[64];
     struct tm tmRange;
     localtime_r(&filterStart, &tmRange);
-    snprintf(pBuf, sizeof(pBuf), "%02d.%02d — %02d.%02d (до %s)", tmRange.tm_mday, tmRange.tm_mon + 1, tmNow.tm_mday, tmNow.tm_mon + 1, timeBuf);
+    snprintf(pBuf, sizeof(pBuf), "%02d.%02d - %02d.%02d (до %s)", tmRange.tm_mday, tmRange.tm_mon + 1, tmNow.tm_mday, tmNow.tm_mon + 1, timeBuf);
     periodInfo = "🕒 <b>Період:</b> " + String(pBuf) + "\n";
   } else {
     header = "📊 <b>ЗВІТ ЗА 7 ДНІВ (ТИЖДЕНЬ)</b>\n";
     char pBuf[64];
     struct tm tmRange;
     localtime_r(&filterStart, &tmRange);
-    snprintf(pBuf, sizeof(pBuf), "%02d.%02d — %02d.%02d (до %s)", tmRange.tm_mday, tmRange.tm_mon + 1, tmNow.tm_mday, tmNow.tm_mon + 1, timeBuf);
+    snprintf(pBuf, sizeof(pBuf), "%02d.%02d - %02d.%02d (до %s)", tmRange.tm_mday, tmRange.tm_mon + 1, tmNow.tm_mday, tmNow.tm_mon + 1, timeBuf);
     periodInfo = "🕒 <b>Період:</b> " + String(pBuf) + "\n";
   }
 
@@ -515,7 +517,13 @@ void handleTelegramCommands() {
       String text = bot->messages[i].text;
       text.trim();
 
-      if (text == "/start" || text == "Стан" || text == "📊 Стан" || text == "/status") {
+      if (text.indexOf("3") != -1) {
+        bot->sendMessageWithReplyKeyboard(chat_id, generateReportText(3), "HTML", kbdMarkup, true);
+      } else if (text.indexOf("7") != -1 || text.indexOf("тижд") != -1 || text.indexOf("неділ") != -1 || text.indexOf("week") != -1) {
+        bot->sendMessageWithReplyKeyboard(chat_id, generateReportText(7), "HTML", kbdMarkup, true);
+      } else if (text.indexOf("сьогодн") != -1 || text.indexOf("Сьогодн") != -1 || text == "/report" || text == "/today" || text == "Звіт" || text == "📈 Звіт") {
+        bot->sendMessageWithReplyKeyboard(chat_id, generateReportText(1), "HTML", kbdMarkup, true);
+      } else if (text == "/start" || text.indexOf("тан") != -1 || text == "/status") {
         time_t now = time(NULL);
         uint32_t durSec = 0;
         if (now > 1000000000 && lastStateChangeTime > 1000000000) {
@@ -528,16 +536,6 @@ void handleTelegramCommands() {
         reply += "⏳ <b>Тривалість поточного стану:</b> " + formatDuration(durSec) + "\n";
         reply += "🕒 <b>Останнє перемикання:</b> " + formatTime(lastStateChangeTime) + "\n";
         bot->sendMessageWithReplyKeyboard(chat_id, reply, "HTML", kbdMarkup, true);
-      } else if (text == "/report" || text == "/today" || text == "Звіт" || text == "📈 Звіт" || 
-                 text == "Звіт сьогодні" || text == "📅 Звіт сьогодні" || text == "Звіт за сьогодні" || text == "Сьогодні") {
-        bot->sendMessageWithReplyKeyboard(chat_id, generateReportText(1), "HTML", kbdMarkup, true);
-      } else if (text == "/report3" || text == "Звіт за 3 дні" || text == "📆 Звіт за 3 дні" || text == "За 3 дні" || text == "3 дні") {
-        bot->sendMessageWithReplyKeyboard(chat_id, generateReportText(3), "HTML", kbdMarkup, true);
-      } else if (text == "/report7" || text == "/week" || text == "Звіт за 7 днів" || text == "🗓 Звіт за 7 днів" || 
-                 text == "🗓️ Звіт за 7 днів" || text == "Звіт за тиждень" || text == "🗓 Звіт за тиждень" || 
-                 text == "Звіт за неділю" || text == "🗓 Звіт за неділю" || text == "За 7 днів" || text == "За тиждень" || 
-                 text == "За неділю" || text == "7 днів" || text == "Тиждень") {
-        bot->sendMessageWithReplyKeyboard(chat_id, generateReportText(7), "HTML", kbdMarkup, true);
       }
     }
     numNewMessages = bot->getUpdates(bot->last_message_received + 1);
@@ -1464,26 +1462,37 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         let tlEl = document.getElementById('tlChart');
         if (tlEl) {
             try {
-                let dataOn = [], dataOff = [];
+                let dataAll = [];
+                let bgColors = [];
                 (events || []).forEach(ev => {
-                    if (ev.start > 1000000000) {
-                        let obj = { x: [ev.start * 1000, ev.end * 1000], y: 'Мережа' };
-                        if (ev.state) dataOn.push(obj); else dataOff.push(obj);
+                    if (ev.start > 1000000000 && ev.end > ev.start) {
+                        dataAll.push({ x: [ev.start * 1000, ev.end * 1000], y: 'Мережа' });
+                        bgColors.push(ev.state ? '#4ADE80' : '#FB7185');
                     }
                 });
-                let minTime = new Date(dsStr + "T00:00:00").getTime();
-                let maxTime = new Date(deStr + "T23:59:59").getTime();
-                if (isNaN(minTime)) minTime = Date.now() - 7 * 86400000;
-                if (isNaN(maxTime)) maxTime = Date.now();
 
-                let hasDateAdapter = !!(window.Chart._adapters && window.Chart._adapters._date);
+                let minTime = new Date(dsStr + "T00:00:00").getTime();
+                let nowTs = Date.now();
+                let isToday = (deStr === (new Date()).toISOString().split('T')[0]);
+                let maxTime = isToday ? (nowTs + 60000) : new Date(deStr + "T23:59:59").getTime();
+                if (isNaN(minTime)) minTime = nowTs - 7 * 86400000;
+                if (isNaN(maxTime) || maxTime <= minTime) maxTime = minTime + 86400000;
+
+                let hasDateAdapter = !!(window.Chart && window.Chart._adapters && window.Chart._adapters._date);
 
                 let xScaleConfig = hasDateAdapter ? {
                     type: 'time',
                     min: minTime,
                     max: maxTime,
-                    time: { displayFormats: { hour: 'dd.MM HH:mm' } },
-                    grid: { color: 'rgba(255,255,255,0.06)' }
+                    time: {
+                        displayFormats: {
+                            minute: 'HH:mm',
+                            hour: 'dd.MM HH:mm',
+                            day: 'dd.MM'
+                        }
+                    },
+                    grid: { color: 'rgba(255,255,255,0.06)' },
+                    ticks: { color: '#94A3B8' }
                 } : {
                     type: 'linear',
                     min: minTime,
@@ -1496,7 +1505,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
                             let hh = String(d.getHours()).padStart(2, '0');
                             let mi = String(d.getMinutes()).padStart(2, '0');
                             return `${dd}.${mm} ${hh}:${mi}`;
-                        }
+                        },
+                        color: '#94A3B8'
                     },
                     grid: { color: 'rgba(255,255,255,0.06)' }
                 };
@@ -1505,26 +1515,58 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
                     tlChart = new Chart(tlEl.getContext('2d'), {
                         type: 'bar',
                         data: {
-                            datasets: [
-                                { label: 'Є світло', data: dataOn, backgroundColor: '#4ADE80', barPercentage: 0.8, borderRadius: 4, borderSkipped: false },
-                                { label: 'Немає світла', data: dataOff, backgroundColor: '#FB7185', barPercentage: 0.8, borderRadius: 4, borderSkipped: false }
-                            ]
+                            datasets: [{
+                                label: 'Стан живлення',
+                                data: dataAll,
+                                backgroundColor: bgColors,
+                                barPercentage: 0.85,
+                                categoryPercentage: 1.0,
+                                borderRadius: 4,
+                                borderSkipped: false
+                            }]
                         },
                         options: {
                             indexAxis: 'y',
                             responsive: true,
                             maintainAspectRatio: false,
+                            grouped: false,
                             scales: {
                                 x: xScaleConfig,
-                                y: { stacked: true, grid: { display: false } }
+                                y: {
+                                    display: false,
+                                    grid: { display: false }
+                                }
                             },
-                            plugins: { legend: { display: false } }
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                    displayColors: false,
+                                    callbacks: {
+                                        title: function(items) {
+                                            if (!items || !items.length) return '';
+                                            let raw = items[0].raw;
+                                            let s = new Date(raw.x[0]);
+                                            let e = new Date(raw.x[1]);
+                                            let pad = n => String(n).padStart(2, '0');
+                                            let fmt = d => `${pad(d.getDate())}.${pad(d.getMonth()+1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                                            return `${fmt(s)} - ${fmt(e)}`;
+                                        },
+                                        label: function(item) {
+                                            let raw = item.raw;
+                                            let durSec = Math.max(0, Math.round((raw.x[1] - raw.x[0]) / 1000));
+                                            let isLightOn = item.dataset.backgroundColor[item.dataIndex] === '#4ADE80';
+                                            let stateText = isLightOn ? '🟢 Є світло' : '🔴 Немає світла';
+                                            return `${stateText}: ${formatDur(durSec)}`;
+                                        }
+                                    }
+                                }
+                            }
                         }
                     });
                     updateChartTheme();
                 } else {
-                    tlChart.data.datasets[0].data = dataOn;
-                    tlChart.data.datasets[1].data = dataOff;
+                    tlChart.data.datasets[0].data = dataAll;
+                    tlChart.data.datasets[0].backgroundColor = bgColors;
                     tlChart.options.scales.x.min = minTime;
                     tlChart.options.scales.x.max = maxTime;
                     tlChart.update('none');
@@ -1848,7 +1890,7 @@ void handleApiReport() {
   uint32_t timeOn = 0, timeOff = 0;
   time_t now = time(NULL);
 
-  DynamicJsonDocument doc(8192);
+  DynamicJsonDocument doc(16384);
   JsonArray events = doc.createNestedArray("events");
 
   int matchIndices[MAX_LOGS];
@@ -1867,8 +1909,8 @@ void handleApiReport() {
     }
   }
 
-  // Беремо до 60 останніх (найновіших) подій періоду і додаємо в хронологічному порядку
-  int takeStart = (matchCount > 60) ? (matchCount - 60) : 0;
+  // Беремо до 120 останніх (найновіших) подій періоду і додаємо в хронологічному порядку
+  int takeStart = (matchCount > 120) ? (matchCount - 120) : 0;
   for (int m = takeStart; m < matchCount; m++) {
     int i = matchIndices[m];
     time_t entryEnd = logs[i].timestamp;
