@@ -20,6 +20,8 @@ void applyDeviceHostname();
 String escapeHtml(const String& s);
 
 // ================= КОРИСТУВАЦЬКІ НАЛАШТУВАННЯ =================
+#define FIRMWARE_VERSION "v2.5.2" // Поточна версія прошивки
+#define AP_PASSWORD "12345678"    // Пароль точки доступу Wi-Fi (ESP32 AP / WiFiManager, мін. 8 символів або "" для відкритої мережі)
 #define SENSOR_PIN 18            // GPIO пін датчика (якщо ESP32 підключено до USB, краще GPIO 18)
 #define SENSOR_ACTIVE_LOW true  // true: LOW = світло є, HIGH = світла немає (стандарт для оптопар)
 #define NTP_SERVER "pool.ntp.org"
@@ -87,10 +89,20 @@ struct Config {
 
 Config config;
 
+bool isProDevice() {
+  String id = String(config.deviceId);
+  id.trim();
+  return id.endsWith("Pro") || id.endsWith("pro") || id.endsWith("PRO");
+}
+
+String getDeviceBrand() {
+  return isProDevice() ? "SvitloCheck Pro" : "SvitloCheck";
+}
+
 void applyDeviceHostname() {
   String hName = String(config.deviceId);
   hName.trim();
-  if (hName.length() == 0) hName = "SvitloCheck";
+  if (hName.length() == 0) hName = isProDevice() ? "SvitloCheck-Pro" : "SvitloCheck";
 
   String cleanH = "";
   for (size_t i = 0; i < hName.length(); i++) {
@@ -101,7 +113,7 @@ void applyDeviceHostname() {
       cleanH += '-';
     }
   }
-  if (cleanH.length() == 0) cleanH = "SvitloCheck";
+  if (cleanH.length() == 0) cleanH = isProDevice() ? "SvitloCheck-Pro" : "SvitloCheck";
 
   WiFi.setHostname(cleanH.c_str());
 #if defined(ESP_IDF_VERSION_MAJOR) && (ESP_IDF_VERSION_MAJOR >= 4)
@@ -548,7 +560,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SvitloCheck Pro Telemetry</title>
+    <title id="pageTitle">SvitloCheck Telemetry</title>
     <script src="/chart.js"></script>
     <script src="/adapter.js"></script>
     <script>
@@ -789,7 +801,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     <header class="top-nav">
         <div>
             <div class="loc-pill caption-4"><svg class="ph"><use href="#ph-map-pin"></use></svg> Об'єкт: <span id="locName" style="color: var(--text-primary);">Завантаження...</span></div>
-            <h1 class="heading-2 header-gradient">SvitloCheck Telemetry</h1>
+            <h1 class="heading-2 header-gradient" id="mainHeaderTitle">SvitloCheck Telemetry</h1>
         </div>
         <div class="nav-pills">
             <div class="status-pill body-5"><span id="netDot" class="dot dot-online"></span><span>Інтернет: <span class="mono-val" id="sysInternet">...</span></span></div>
@@ -883,7 +895,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
                     <button class="btn btn-secondary active caption-2" id="fltAll" onclick="filterLogs('all')">Всі події</button>
                     <button class="btn btn-secondary caption-2" id="fltOn" onclick="filterLogs('on')">З'явилось</button>
                     <button class="btn btn-secondary caption-2" id="fltOff" onclick="filterLogs('off')">Зникло</button>
-                    <a href="/api/export" download="svitlocheck_history.csv" class="btn btn-secondary caption-2"><svg class="ph"><use href="#ph-download-simple"></use></svg> CSV (усі 500)</a>
+                    <a href="/api/export" id="exportBtn" download="svitlocheck_history.csv" class="btn btn-secondary caption-2"><svg class="ph"><use href="#ph-download-simple"></use></svg> CSV (усі 500)</a>
                     <button class="btn btn-danger caption-2" onclick="clearHistory()"><svg class="ph"><use href="#ph-trash"></use></svg> Очистити</button>
                 </div>
             </div>
@@ -939,7 +951,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
                             Це ім'я передається роутеру (DHCP Option 12) та задає мережевий хост (наприклад, <code>SvitloCheck-01</code>).
                         </p>
                         <div style="display: flex; gap: 8px;">
-                            <input type="text" id="inpDeviceId" class="body-5" placeholder="SvitloCheck-01" style="max-width: 280px;">
+                            <input type="text" id="inpDeviceId" class="body-5" placeholder="SvitloCheck-01" oninput="applyBrand(this.value)" style="max-width: 280px;">
                             <button type="button" class="btn body-2" onclick="saveDeviceId()"><svg class="ph"><use href="#ph-floppy-disk"></use></svg> Зберегти</button>
                         </div>
                         <div id="devIdSavedAlert" style="display: none; color: var(--success); font-size: 13px; margin-top: 8px;">
@@ -956,6 +968,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
                             <div><span style="color: var(--text-muted);">SSID роутера:</span> <b id="devSsid" class="mono-val">--</b></div>
                             <div><span style="color: var(--text-muted);">Температура CPU:</span> <b id="devTempBadge" class="mono-val" style="color: var(--warning);">--</b></div>
                             <div><span style="color: var(--text-muted);">Пінг (Cloudflare):</span> <b id="devPingBadge" class="mono-val" style="color: var(--success);">--</b></div>
+                            <div><span style="color: var(--text-muted);">Версія прошивки:</span> <b id="devFwBadge" class="mono-val" style="color: var(--accent);">--</b></div>
+                            <div><span style="color: var(--text-muted);">Бренд / Режим:</span> <b id="devBrandBadge" class="mono-val" style="color: var(--accent);">--</b></div>
                         </div>
                     </div>
                 </div>
@@ -1008,7 +1022,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     </div>
 
     <footer class="legal-footer">
-        <div class="caption-2">© 2026 SvitloCheck Pro. Моніторинг електромережі та автономна телеметрія.</div>
+        <div class="caption-2" id="footerText">© 2026 <span class="brand-text">SvitloCheck</span>. Моніторинг електромережі та автономна телеметрія • Версія прошивки: <span id="fwVer">v2.5.2</span></div>
         <div class="legal-links">
             <button class="legal-link" onclick="openModal('termsModal')"><svg class="ph"><use href="#ph-file-text"></use></svg> Умови та дисклеймер</button>
             <button class="legal-link" onclick="openModal('safetyModal')"><svg class="ph"><use href="#ph-shield-warning"></use></svg> Безпека при підключенні</button>
@@ -1023,7 +1037,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <div class="modal-header"><h3 class="title-1 card-title" style="margin:0;"><svg class="ph"><use href="#ph-file-text"></use></svg> Умови використання та дисклеймер</h3><button class="modal-close" onclick="closeModal('termsModal')"><svg class="ph"><use href="#ph-x"></use></svg></button></div>
         <div class="modal-body">
             <h4>1. Призначення пристрою</h4>
-            <p>SvitloCheck Pro призначений виключно для некомерційного індивідуального моніторингу наявності фазної напруги побутової електромережі.</p>
+            <p><span class="brand-text">SvitloCheck</span> призначений виключно для некомерційного індивідуального моніторингу наявності фазної напруги побутової електромережі.</p>
             <h4>2. Відмова від відповідальності</h4>
             <p>Розробники та виробники обладнання не несуть жодної відповідальності за прямі, непрямі або випадкові збитки внаслідок використання пристрою.</p>
         </div>
@@ -1068,6 +1082,37 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     function openModal(id) { document.getElementById(id).classList.add('open'); }
     function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+    function applyBrand(deviceId, fwVersion) {
+        let id = (deviceId || '').trim();
+        let isPro = id.endsWith('Pro') || id.endsWith('pro') || id.endsWith('PRO');
+        let brand = isPro ? 'SvitloCheck Pro' : 'SvitloCheck';
+        let brandTitle = brand + ' Telemetry';
+
+        let tEl = document.getElementById('pageTitle');
+        if (tEl) tEl.innerText = brandTitle;
+        let h1El = document.getElementById('mainHeaderTitle');
+        if (h1El) h1El.innerText = brandTitle;
+
+        document.querySelectorAll('.brand-text').forEach(el => {
+            el.innerText = brand;
+        });
+
+        let expBtn = document.getElementById('exportBtn');
+        if (expBtn) {
+            expBtn.setAttribute('download', isPro ? 'svitlocheck_pro_history.csv' : 'svitlocheck_history.csv');
+        }
+
+        if (fwVersion) {
+            let fwEl = document.getElementById('fwVer');
+            if (fwEl) fwEl.innerText = fwVersion;
+            let devFwEl = document.getElementById('devFwBadge');
+            if (devFwEl) devFwEl.innerText = fwVersion;
+        }
+
+        let devBrandEl = document.getElementById('devBrandBadge');
+        if (devBrandEl) devBrandEl.innerText = brand;
+    }
 
     function setTheme(theme) {
         document.body.setAttribute('data-theme', theme);
@@ -1321,6 +1366,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             }
 
             window.lastDevData = d;
+            applyBrand(d.deviceId, d.fwVersion);
             syncDevPanel();
             updateReport();
         }).catch(() => { isFullFetching = false; });
@@ -1695,7 +1741,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         }
         document.getElementById('devMac').innerText = d.mac || 'N/A';
         document.getElementById('devIp').innerText = d.ip || 'N/A';
-        document.getElementById('devHostname').innerText = d.hostname || d.deviceId || 'SvitloCheck-01';
+        document.getElementById('devHostname').innerText = d.hostname || d.deviceId || (d.isPro ? 'SvitloCheck-Pro' : 'SvitloCheck-01');
         document.getElementById('devSsid').innerText = d.wifiSsid || 'N/A';
         if (d.chipTemp) {
             document.getElementById('devTempBadge').innerText = d.chipTemp + ' °C';
@@ -1703,6 +1749,12 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         if (d.ping !== undefined) {
             document.getElementById('devPingBadge').innerText = (d.ping > 0) ? (d.ping + ' ms') : 'Немає зв\'язку';
         }
+        if (d.fwVersion) {
+            let devFw = document.getElementById('devFwBadge');
+            if (devFw) devFw.innerText = d.fwVersion;
+        }
+        let devBrand = document.getElementById('devBrandBadge');
+        if (devBrand) devBrand.innerText = d.brand || (d.isPro ? 'SvitloCheck Pro' : 'SvitloCheck');
 
         // Рендеринг журналу перегріву (>68°C)
         let tTbody = document.getElementById('tempLogTable');
@@ -1746,6 +1798,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             let al = document.getElementById('devIdSavedAlert');
             al.style.display = 'block';
             setTimeout(() => { al.style.display = 'none'; }, 4000);
+            applyBrand(val);
             loadFullData();
         }).catch(e => alert('Помилка збереження'));
     }
@@ -1850,6 +1903,9 @@ void handleApiData() {
   doc["mac"] = WiFi.macAddress();
   doc["ip"] = WiFi.localIP().toString();
   doc["hostname"] = (strlen(config.deviceId) > 0) ? String(config.deviceId) : WiFi.getHostname();
+  doc["fwVersion"] = FIRMWARE_VERSION;
+  doc["isPro"] = isProDevice();
+  doc["brand"] = getDeviceBrand();
 
   JsonArray arr = doc.createNestedArray("logs");
   int renderCount = 0;
@@ -1973,7 +2029,8 @@ void handleApiDelete() {
 }
 
 void handleApiExportCsv() {
-  server.sendHeader("Content-Disposition", "attachment; filename=\"svitlocheck_history.csv\"");
+  String csvFilename = isProDevice() ? "svitlocheck_pro_history.csv" : "svitlocheck_history.csv";
+  server.sendHeader("Content-Disposition", "attachment; filename=\"" + csvFilename + "\"");
   server.sendHeader("Cache-Control", "no-cache");
   server.setContentLength(CONTENT_LENGTH_UNKNOWN);
   server.send(200, "text/csv; charset=utf-8", "");
@@ -2057,13 +2114,14 @@ void setup() {
   wm.setShowInfoUpdate(false);
   wm.setCustomHeadElement("<style>a[href*='github'],p:has(a[href*='github']){display:none!important;}</style>");
 
-  String apName = (strlen(config.deviceId) > 0) ? String(config.deviceId) : "ESP32-Power-Monitor";
+  String apName = (strlen(config.deviceId) > 0) ? String(config.deviceId) : (isProDevice() ? "SvitloCheck-Pro" : "SvitloCheck");
   wm.setHostname(apName.c_str());
   wm.setConfigPortalBlocking(false);
   WiFi.setAutoReconnect(true);
 
   // Автономний старт: не блокуємось і не перезавантажуємось при відсутності Wi-Fi!
-  wm.autoConnect(apName.c_str());
+  const char* apPass = (strlen(AP_PASSWORD) >= 8) ? AP_PASSWORD : NULL;
+  wm.autoConnect(apName.c_str(), apPass);
 
   applyDeviceHostname();
 
@@ -2200,15 +2258,18 @@ void setup() {
   });
 
   server.on("/wifi", []() {
-    String apName = (strlen(config.deviceId) > 0) ? String(config.deviceId) : "ESP32-Power-Monitor";
+    String apName = (strlen(config.deviceId) > 0) ? String(config.deviceId) : (isProDevice() ? "SvitloCheck-Pro" : "SvitloCheck");
     String escApName = escapeHtml(apName);
+    const char* apPass = (strlen(AP_PASSWORD) >= 8) ? AP_PASSWORD : NULL;
+    String passInfo = (apPass != NULL) ? ("<p>Пароль Wi-Fi: <b>" + escapeHtml(String(AP_PASSWORD)) + "</b></p>") : "<p>Мережа відкрита (без пароля)</p>";
     String msg = "<html><body style='background:#0F172A;color:#F1F5F9;font-family:sans-serif;text-align:center;padding:40px;'>"
                  "<h2 style='color:#38BDF8;'>Точка доступу Wi-Fi активована!</h2>"
-                 "<p>Підключіться до: <b>" + escApName + "</b>, адреса: <b>http://192.168.4.1</b></p></body></html>";
+                 "<p>Підключіться до: <b>" + escApName + "</b>, адреса: <b>http://192.168.4.1</b></p>" +
+                 passInfo + "</body></html>";
     server.send(200, "text/html", msg);
     if (!isConfigPortalRunning) {
       wm.setConfigPortalBlocking(false);
-      wm.startConfigPortal(apName.c_str());
+      wm.startConfigPortal(apName.c_str(), apPass);
       isConfigPortalRunning = true;
     }
   });
@@ -2220,7 +2281,7 @@ void setup() {
 void loop() {
   server.handleClient();
 
-  if (isConfigPortalRunning) {
+  if (isConfigPortalRunning || wm.getConfigPortalActive()) {
     wm.process();
     if (!wm.getConfigPortalActive()) {
       isConfigPortalRunning = false;
