@@ -395,7 +395,6 @@ void processUnsentMessages() {
         msg += formatDuration(logs[i].duration) + "\n";
       }
       if (!sendToAllChats(msg)) {
-        // НЕ скидаємо global isInternetConnected!
         break;
       }
       logs[i].sent = true;
@@ -499,8 +498,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SvitloCheck Pro Telemetry</title>
-    <script src="/chart.js"></script>
-    <script src="/adapter.js"></script>
+    <script src="/chart.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js';"></script>
+    <script src="/adapter.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js';"></script>
     <style>
         :root {
             --bg-base: #070B14; --bg-surface: #0E1526; --bg-card: #131C31; --bg-sub: #18233C;
@@ -590,7 +589,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         .card-title { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; color: var(--text-primary); }
         .card-subtitle { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
 
-        .hero-card { display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center; padding: 28px 24px; }
+        .hero-card { display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: center; padding: 24px; }
         .hero-on { border-color: rgba(74, 222, 128, 0.35); background: linear-gradient(135deg, var(--bg-card) 0%, rgba(74, 222, 128, 0.08) 100%); }
         .hero-off { border-color: rgba(251, 113, 133, 0.35); background: linear-gradient(135deg, var(--bg-card) 0%, rgba(251, 113, 133, 0.08) 100%); }
         .hero-status-row { display: flex; align-items: center; gap: 16px; margin-top: 10px; }
@@ -601,9 +600,12 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         .status-text-on { font-size: 34px; font-weight: 800; letter-spacing: -0.02em; color: var(--success); line-height: 1.1; }
         .status-text-off { font-size: 34px; font-weight: 800; letter-spacing: -0.02em; color: var(--danger); line-height: 1.1; }
 
-        .hero-timer-box { margin-top: 20px; display: inline-flex; flex-direction: column; }
+        .hero-timer-box { margin-top: 16px; display: inline-flex; flex-direction: column; }
         .timer-badge { display: inline-flex; align-items: baseline; gap: 8px; margin-top: 4px; }
         .timer-val { font-size: 26px; font-weight: 700; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; letter-spacing: -0.02em; color: var(--text-primary); }
+
+        .hero-sla-box { display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; width: 170px; height: 170px; }
+        .sla-center-label { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; }
 
         .kpi-card { padding: 16px; display: flex; flex-direction: column; justify-content: space-between; }
         .kpi-top { display: flex; justify-content: space-between; align-items: center; color: var(--text-muted); font-size: 13px; font-weight: 500; }
@@ -614,7 +616,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         .summary-strips { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
         .strip-box { background: var(--bg-sub); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; }
 
-        .chart-timeline-box { position: relative; height: 110px; width: 100%; margin-top: 12px; }
+        .chart-timeline-box { position: relative; height: 130px; width: 100%; margin-top: 12px; }
 
         .res-item { margin-bottom: 14px; }
         .res-item:last-child { margin-bottom: 0; }
@@ -709,6 +711,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 <symbol id="ph-file-text" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></symbol>
 <symbol id="ph-shield-warning" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></symbol>
 <symbol id="ph-code" viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></symbol>
+<symbol id="ph-arrow-counter-clockwise" viewBox="0 0 24 24"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></symbol>
 </svg>
 <div id="ambientGlow" class="ambient-glow glow-on"></div>
 <div class="container">
@@ -748,10 +751,12 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
                     <div class="timer-badge">
                         <span class="timer-val" id="currDuration">--:--:--</span>
                     </div>
+                    <span class="caption-4 mono-val" style="color: var(--text-muted); margin-top: 6px;" id="lastChangeClock">Останнє перемикання: ...</span>
                 </div>
             </div>
-            <div style="text-align: right; display: flex; flex-direction: column; justify-content: space-between; height: 100%;">
-                <span class="caption-4 mono-val" style="color: var(--text-muted);" id="lastChangeClock">Останнє перемикання: ...</span>
+            <div class="hero-sla-box">
+                <canvas id="slaChart"></canvas>
+                <div class="sla-center-label"><span class="heading-5 mono-val" id="slaCenterPct">--%</span><span class="caption-4" style="color: var(--text-secondary); display: block;">Зі світлом</span></div>
             </div>
         </div>
 
@@ -781,6 +786,14 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <div class="res-item"><div class="res-label body-5"><span>Пінг до сервера</span><span class="mono-val" id="pingValText">...</span></div><div class="progress-track"><div class="progress-fill fill-success" id="pingBar" style="transform: scaleX(0);"></div></div></div>
             <div class="res-item"><div class="res-label body-5"><span>Оперативна пам'ять (RAM)</span><span class="mono-val" id="ramUsageText">...</span></div><div class="progress-track"><div class="progress-fill fill-accent" id="ramBar" style="transform: scaleX(0);"></div></div></div>
             <div class="res-item"><div class="res-label body-5"><span>Wi-Fi сигнал (<span style="color: var(--accent);" id="wifiSsid">...</span>)</span><span class="mono-val" id="wifiSignalText">...</span></div><div class="progress-track"><div class="progress-fill fill-warning" id="wifiBar" style="transform: scaleX(0);"></div></div></div>
+            
+            <div style="margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                <div>
+                    <div class="body-5" style="font-weight: 600; color: var(--text-primary);">Пам'ять контролера</div>
+                    <div class="caption-4" style="color: var(--text-muted);">Очищення історії та Telegram (без скидання Hostname/Wi-Fi)</div>
+                </div>
+                <button type="button" class="btn btn-danger caption-2" onclick="factoryResetUser()"><svg class="ph"><use href="#ph-arrow-counter-clockwise"></use></svg> Очистити пам'ять</button>
+            </div>
         </div>
 
         <div class="card col-6">
@@ -805,7 +818,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <div class="card-header">
                 <div>
                     <h3 class="title-1 card-title"><svg class="ph"><use href="#ph-list-dashes"></use></svg> Журнал подій енергомережі</h3>
-                    <p class="body-5 card-subtitle">Останні збережені події перемикання мережі</p>
+                    <p class="body-5 card-subtitle">Останні збережені події перемикання мережі (прокрутка всередині)</p>
                 </div>
                 <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                     <button class="btn btn-secondary active caption-2" id="fltAll" onclick="filterLogs('all')">Всі події</button>
@@ -815,9 +828,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
                     <button class="btn btn-danger caption-2" onclick="clearHistory()"><svg class="ph"><use href="#ph-trash"></use></svg> Очистити</button>
                 </div>
             </div>
-            <div class="table-wrap">
+            <div class="table-wrap" style="max-height: 380px; overflow-y: auto;">
                 <table>
-                    <thead class="caption-2"><tr><th>#</th><th>Дата</th><th>Час</th><th>Подія</th><th>Минулий стан</th><th>Telegram</th><th style="text-align: right;">Дія</th></tr></thead>
+                    <thead class="caption-2" style="position: sticky; top: 0; z-index: 2; background: var(--bg-sub);"><tr><th>#</th><th>Дата</th><th>Час</th><th>Подія</th><th>Минулий стан</th><th>Telegram</th><th style="text-align: right;">Дія</th></tr></thead>
                     <tbody class="body-5" id="logTable"></tbody>
                 </table>
             </div>
@@ -1327,6 +1340,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
            
             document.getElementById('repOnText').innerText = r.on; document.getElementById('repOnPct').innerText = onPct + '%';
             document.getElementById('repOffText').innerText = r.off; document.getElementById('repOffPct').innerText = offPct + '%';
+            
+            let slaCenterEl = document.getElementById('slaCenterPct');
+            if (slaCenterEl) slaCenterEl.innerText = onPct + '%';
             document.getElementById('kpiSla').innerText = onPct + '%';
            
             let outages = (r.events || []).filter(e => !e.state).length;
@@ -1342,6 +1358,37 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         if (!window.Chart) return;
         Chart.defaults.font.family = "-apple-system, system-ui, sans-serif";
 
+        let slaEl = document.getElementById('slaChart');
+        if (slaEl) {
+            if (!slaChart) {
+                slaChart = new Chart(slaEl.getContext('2d'), {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Є світло', 'Немає світла'],
+                        datasets: [{
+                            data: [onPct, offPct],
+                            backgroundColor: ['#4ADE80', '#FB7185'],
+                            borderWidth: 0,
+                            hoverOffset: 6
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        cutout: '74%',
+                        layout: { padding: 8 },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: { displayColors: false, callbacks: { label: c => c.parsed + '%' } }
+                        }
+                    }
+                });
+            } else {
+                slaChart.data.datasets[0].data = [onPct, offPct];
+                slaChart.update('none');
+            }
+        }
+
         let dataOn = [], dataOff = [];
         (events || []).forEach(ev => {
             if (ev.start > 1000000000) {
@@ -1355,13 +1402,36 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         if (!tlEl) return;
         if (!tlChart) {
             tlChart = new Chart(tlEl.getContext('2d'), {
-                type: 'bar', data: { datasets: [{ label: 'Є світло', data: dataOn, backgroundColor: '#4ADE80', barPercentage: 0.8, borderRadius: 4, borderSkipped: false }, { label: 'Немає світла', data: dataOff, backgroundColor: '#FB7185', barPercentage: 0.8, borderRadius: 4, borderSkipped: false }] },
-                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, scales: { x: { type: 'time', min: minTime, max: maxTime, time: { displayFormats: { hour: 'dd.MM HH:mm' } }, grid: { color: 'rgba(255,255,255,0.06)' } }, y: { stacked: true, grid: { display: false } } }, plugins: { legend: { display: false } } }
+                type: 'bar',
+                data: {
+                    datasets: [
+                        { label: 'Є світло', data: dataOn, backgroundColor: '#4ADE80', barPercentage: 0.8, borderRadius: 4, borderSkipped: false },
+                        { label: 'Немає світла', data: dataOff, backgroundColor: '#FB7185', barPercentage: 0.8, borderRadius: 4, borderSkipped: false }
+                    ]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            type: 'time',
+                            min: minTime,
+                            max: maxTime,
+                            time: { displayFormats: { hour: 'dd.MM HH:mm' } },
+                            grid: { color: 'rgba(255,255,255,0.06)' }
+                        },
+                        y: { stacked: true, grid: { display: false } }
+                    },
+                    plugins: { legend: { display: false } }
+                }
             });
             updateChartTheme();
         } else {
-            tlChart.data.datasets[0].data = dataOn; tlChart.data.datasets[1].data = dataOff;
-            tlChart.options.scales.x.min = minTime; tlChart.options.scales.x.max = maxTime;
+            tlChart.data.datasets[0].data = dataOn;
+            tlChart.data.datasets[1].data = dataOff;
+            tlChart.options.scales.x.min = minTime;
+            tlChart.options.scales.x.max = maxTime;
             tlChart.update('none');
         }
     }
@@ -1384,10 +1454,20 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             fd.append('devPass', '12366999');
             fetch('/api/clear', { method: 'POST', body: fd, headers: { 'X-Dev-Pass': '12366999' } }).then(() => {
                 lastTotalLogs = -1;
+                if (slaChart) { slaChart.data.datasets[0].data = [0, 0]; slaChart.update('none'); }
                 if (tlChart) { tlChart.destroy(); tlChart = null; }
                 loadFullData();
                 updateReport();
             });
+        }
+    }
+
+    function factoryResetUser() {
+        if (confirm("УВАГА! Ви дійсно бажаєте повністю очистити пам'ять пристрою?\n\nБуде видалено:\n- Весь журнал подій енергомережі\n- Налаштування Telegram (токен бота та ID чатів)\n- Назву локації\n\nПараметри розробника (Device ID, Wi-Fi та діагностика) залишаться.")) {
+            fetch('/api/resetUser', { method: 'POST' }).then(r => r.json()).then(res => {
+                alert("Пам'ять успішно очищено! Сторінка оновиться.");
+                location.reload();
+            }).catch(e => alert("Помилка очищення пам'яті"));
         }
     }
 
@@ -1892,6 +1972,28 @@ void setup() {
   server.on("/api/clear", HTTP_POST, handleApiClear);
   server.on("/api/delete", HTTP_POST, handleApiDelete);
   server.on("/api/export", HTTP_GET, handleApiExportCsv);
+
+  // Скидання користувацької пам'яті (журнали та Telegram), зберігаючи налаштування розробника
+  server.on("/api/resetUser", HTTP_POST, []() {
+    logCount = 0;
+    LittleFS.remove(LOG_FILE);
+    LittleFS.remove("/history.tmp");
+
+    char savedDeviceId[32];
+    strlcpy(savedDeviceId, config.deviceId, sizeof(savedDeviceId));
+
+    memset(&config, 0, sizeof(config));
+    strlcpy(config.deviceId, savedDeviceId, sizeof(config.deviceId));
+    strlcpy(config.locationName, "Моя адреса / Об'єкт", sizeof(config.locationName));
+    saveConfig();
+
+    if (bot) {
+      delete bot;
+      bot = NULL;
+    }
+
+    server.send(200, "application/json", "{\"status\":\"ok\"}");
+  });
 
   server.on("/api/setDeviceId", HTTP_POST, []() {
     if (!verifyDevAuth()) return;
