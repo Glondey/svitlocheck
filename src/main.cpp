@@ -498,8 +498,16 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SvitloCheck Pro Telemetry</title>
-    <script src="/chart.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js';"></script>
-    <script src="/adapter.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js';"></script>
+    <script src="/chart.js"></script>
+    <script src="/adapter.js"></script>
+    <script>
+        if (typeof Chart === 'undefined') {
+            document.write('<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"><\/script>');
+            document.write('<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"><\/script>');
+        } else if (!Chart._adapters || !Chart._adapters._date) {
+            document.write('<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"><\/script>');
+        }
+    </script>
     <style>
         :root {
             --bg-base: #070B14; --bg-surface: #0E1526; --bg-card: #131C31; --bg-sub: #18233C;
@@ -790,7 +798,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <div style="margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
                 <div>
                     <div class="body-5" style="font-weight: 600; color: var(--text-primary);">Пам'ять контролера</div>
-                    <div class="caption-4" style="color: var(--text-muted);">Очищення історії та Telegram (без скидання Hostname/Wi-Fi)</div>
+                    <div class="caption-4" style="color: var(--text-muted);">Очищення історії та Telegram</div>
                 </div>
                 <button type="button" class="btn btn-danger caption-2" onclick="factoryResetUser()"><svg class="ph"><use href="#ph-arrow-counter-clockwise"></use></svg> Очистити пам'ять</button>
             </div>
@@ -1263,6 +1271,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
             window.lastDevData = d;
             syncDevPanel();
+            updateReport();
         }).catch(() => { isFullFetching = false; });
     }
 
@@ -1350,6 +1359,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
             if (window.Chart) {
                 renderCharts(onPct, offPct, r.events || [], ds, de);
+            } else {
+                setTimeout(() => {
+                    if (window.Chart) renderCharts(onPct, offPct, r.events || [], ds, de);
+                }, 400);
             }
         }).catch(() => { isReportFetching = false; });
     }
@@ -1360,79 +1373,112 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
         let slaEl = document.getElementById('slaChart');
         if (slaEl) {
-            if (!slaChart) {
-                slaChart = new Chart(slaEl.getContext('2d'), {
-                    type: 'doughnut',
-                    data: {
-                        labels: ['Є світло', 'Немає світла'],
-                        datasets: [{
-                            data: [onPct, offPct],
-                            backgroundColor: ['#4ADE80', '#FB7185'],
-                            borderWidth: 0,
-                            hoverOffset: 6
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        cutout: '74%',
-                        layout: { padding: 8 },
-                        plugins: {
-                            legend: { display: false },
-                            tooltip: { displayColors: false, callbacks: { label: c => c.parsed + '%' } }
+            try {
+                let pOn = parseFloat(onPct) || 0;
+                let pOff = parseFloat(offPct) || 0;
+                if (!slaChart) {
+                    slaChart = new Chart(slaEl.getContext('2d'), {
+                        type: 'doughnut',
+                        data: {
+                            labels: ['Є світло', 'Немає світла'],
+                            datasets: [{
+                                data: [pOn, pOff],
+                                backgroundColor: ['#4ADE80', '#FB7185'],
+                                borderWidth: 0,
+                                hoverOffset: 6
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            cutout: '74%',
+                            layout: { padding: 8 },
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: { displayColors: false, callbacks: { label: c => c.parsed + '%' } }
+                            }
                         }
-                    }
-                });
-            } else {
-                slaChart.data.datasets[0].data = [onPct, offPct];
-                slaChart.update('none');
+                    });
+                } else {
+                    slaChart.data.datasets[0].data = [pOn, pOff];
+                    slaChart.update('none');
+                }
+            } catch (err) {
+                console.error("Помилка slaChart:", err);
             }
         }
 
-        let dataOn = [], dataOff = [];
-        (events || []).forEach(ev => {
-            if (ev.start > 1000000000) {
-                let obj = { x: [ev.start * 1000, ev.end * 1000], y: 'Мережа' };
-                if (ev.state) dataOn.push(obj); else dataOff.push(obj);
-            }
-        });
-        let minTime = new Date(dsStr + "T00:00:00").getTime(), maxTime = new Date(deStr + "T23:59:59").getTime();
-
         let tlEl = document.getElementById('tlChart');
-        if (!tlEl) return;
-        if (!tlChart) {
-            tlChart = new Chart(tlEl.getContext('2d'), {
-                type: 'bar',
-                data: {
-                    datasets: [
-                        { label: 'Є світло', data: dataOn, backgroundColor: '#4ADE80', barPercentage: 0.8, borderRadius: 4, borderSkipped: false },
-                        { label: 'Немає світла', data: dataOff, backgroundColor: '#FB7185', barPercentage: 0.8, borderRadius: 4, borderSkipped: false }
-                    ]
-                },
-                options: {
-                    indexAxis: 'y',
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        x: {
-                            type: 'time',
-                            min: minTime,
-                            max: maxTime,
-                            time: { displayFormats: { hour: 'dd.MM HH:mm' } },
-                            grid: { color: 'rgba(255,255,255,0.06)' }
-                        },
-                        y: { stacked: true, grid: { display: false } }
+        if (tlEl) {
+            try {
+                let dataOn = [], dataOff = [];
+                (events || []).forEach(ev => {
+                    if (ev.start > 1000000000) {
+                        let obj = { x: [ev.start * 1000, ev.end * 1000], y: 'Мережа' };
+                        if (ev.state) dataOn.push(obj); else dataOff.push(obj);
+                    }
+                });
+                let minTime = new Date(dsStr + "T00:00:00").getTime();
+                let maxTime = new Date(deStr + "T23:59:59").getTime();
+                if (isNaN(minTime)) minTime = Date.now() - 7 * 86400000;
+                if (isNaN(maxTime)) maxTime = Date.now();
+
+                let hasDateAdapter = !!(window.Chart._adapters && window.Chart._adapters._date);
+
+                let xScaleConfig = hasDateAdapter ? {
+                    type: 'time',
+                    min: minTime,
+                    max: maxTime,
+                    time: { displayFormats: { hour: 'dd.MM HH:mm' } },
+                    grid: { color: 'rgba(255,255,255,0.06)' }
+                } : {
+                    type: 'linear',
+                    min: minTime,
+                    max: maxTime,
+                    ticks: {
+                        callback: function(val) {
+                            let d = new Date(val);
+                            let dd = String(d.getDate()).padStart(2, '0');
+                            let mm = String(d.getMonth() + 1).padStart(2, '0');
+                            let hh = String(d.getHours()).padStart(2, '0');
+                            let mi = String(d.getMinutes()).padStart(2, '0');
+                            return `${dd}.${mm} ${hh}:${mi}`;
+                        }
                     },
-                    plugins: { legend: { display: false } }
+                    grid: { color: 'rgba(255,255,255,0.06)' }
+                };
+
+                if (!tlChart) {
+                    tlChart = new Chart(tlEl.getContext('2d'), {
+                        type: 'bar',
+                        data: {
+                            datasets: [
+                                { label: 'Є світло', data: dataOn, backgroundColor: '#4ADE80', barPercentage: 0.8, borderRadius: 4, borderSkipped: false },
+                                { label: 'Немає світла', data: dataOff, backgroundColor: '#FB7185', barPercentage: 0.8, borderRadius: 4, borderSkipped: false }
+                            ]
+                        },
+                        options: {
+                            indexAxis: 'y',
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            scales: {
+                                x: xScaleConfig,
+                                y: { stacked: true, grid: { display: false } }
+                            },
+                            plugins: { legend: { display: false } }
+                        }
+                    });
+                    updateChartTheme();
+                } else {
+                    tlChart.data.datasets[0].data = dataOn;
+                    tlChart.data.datasets[1].data = dataOff;
+                    tlChart.options.scales.x.min = minTime;
+                    tlChart.options.scales.x.max = maxTime;
+                    tlChart.update('none');
                 }
-            });
-            updateChartTheme();
-        } else {
-            tlChart.data.datasets[0].data = dataOn;
-            tlChart.data.datasets[1].data = dataOff;
-            tlChart.options.scales.x.min = minTime;
-            tlChart.options.scales.x.max = maxTime;
-            tlChart.update('none');
+            } catch (err) {
+                console.error("Помилка tlChart:", err);
+            }
         }
     }
 
@@ -1621,8 +1667,17 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     setTheme(localStorage.getItem('svitlo_theme') || 'slate');
+    let initNow = new Date();
+    let initToday = initNow.toISOString().split('T')[0];
+    let initPast = new Date(initNow.getTime() - (7 * 24 * 3600 * 1000)).toISOString().split('T')[0];
+    let elDs = document.getElementById('dateStart');
+    let elDe = document.getElementById('dateEnd');
+    if (elDs && !elDs.value) elDs.value = initPast;
+    if (elDe && !elDe.value) elDe.value = initToday;
+
     loadFullData();
     quickPoll();
+    updateReport();
     // 1. Швидкий пінг кожні 1500мс: моментально оновлює статус мережі та Wi-Fi
     setInterval(quickPoll, 1500);
     // 2. Графіки, аналітика та повна телеметрія оновлюються спокійно кожні 5 секунд
@@ -1953,8 +2008,39 @@ void setup() {
   lastPingCheckTime = millis();
 
   // Статичні стиснуті файли графіків із LittleFS
-  server.serveStatic("/chart.js", LittleFS, "/chart.js.gz", "max-age=31536000");
-  server.serveStatic("/adapter.js", LittleFS, "/adapter.js.gz", "max-age=31536000");
+  server.on("/chart.js", HTTP_GET, []() {
+    if (LittleFS.exists("/chart.js.gz")) {
+      File f = LittleFS.open("/chart.js.gz", "r");
+      server.sendHeader("Cache-Control", "max-age=31536000");
+      server.sendHeader("Content-Encoding", "gzip");
+      server.streamFile(f, "application/javascript");
+      f.close();
+    } else if (LittleFS.exists("/chart.js")) {
+      File f = LittleFS.open("/chart.js", "r");
+      server.sendHeader("Cache-Control", "max-age=31536000");
+      server.streamFile(f, "application/javascript");
+      f.close();
+    } else {
+      server.send(404, "text/plain", "Not Found");
+    }
+  });
+
+  server.on("/adapter.js", HTTP_GET, []() {
+    if (LittleFS.exists("/adapter.js.gz")) {
+      File f = LittleFS.open("/adapter.js.gz", "r");
+      server.sendHeader("Cache-Control", "max-age=31536000");
+      server.sendHeader("Content-Encoding", "gzip");
+      server.streamFile(f, "application/javascript");
+      f.close();
+    } else if (LittleFS.exists("/adapter.js")) {
+      File f = LittleFS.open("/adapter.js", "r");
+      server.sendHeader("Cache-Control", "max-age=31536000");
+      server.streamFile(f, "application/javascript");
+      f.close();
+    } else {
+      server.send(404, "text/plain", "Not Found");
+    }
+  });
 
   const char* headerkeys[] = {"X-Dev-Pass"};
   size_t headerkeyssize = sizeof(headerkeys) / sizeof(char*);
