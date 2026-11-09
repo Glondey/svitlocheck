@@ -10,8 +10,15 @@
 
 
 // ================= КОРИСТУВАЦЬКІ НАЛАШТУВАННЯ =================
-#define SENSOR_PIN 3            
+#define SENSOR_PIN 3            // GPIO пін датчика (якщо ESP32 підключено до USB, краще GPIO 18)
+#define SENSOR_ACTIVE_LOW true  // true: LOW = світло є, HIGH = світла немає (стандарт для оптопар)
+                                // false: HIGH = світло є, LOW = світла немає
 #define NTP_SERVER "pool.ntp.org"
+
+inline bool isPowerPresent() {
+  int val = digitalRead(SENSOR_PIN);
+  return SENSOR_ACTIVE_LOW ? (val == LOW) : (val == HIGH);
+}
 
 
 #define CONFIG_FILE "/config.json"
@@ -517,16 +524,16 @@ void handleRoot() {
                    <p class="body-5 card-subtitle">Експортуйте таблицю у CSV або видаляйте окремі помилкові спрацювання</p>
                </div>
                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                   <button class="btn btn-secondary active caption-2" id="fltAll" onclick="filterLogs('all')">Всі записи</button>
-                   <button class="btn btn-secondary caption-2" id="fltOn" onclick="filterLogs('on')">Було світло</button>
-                   <button class="btn btn-secondary caption-2" id="fltOff" onclick="filterLogs('off')">Не було світла</button>
+                                       <button class="btn btn-secondary active caption-2" id="fltAll" onclick="filterLogs('all')">Всі події</button>
+                    <button class="btn btn-secondary caption-2" id="fltOn" onclick="filterLogs('on')">З'явилось</button>
+                    <button class="btn btn-secondary caption-2" id="fltOff" onclick="filterLogs('off')">Зникло</button>
                    <a href="/api/export" download="svitlocheck_history.csv" class="btn btn-secondary caption-2"><i class="ph ph-download-simple"></i> Експорт CSV</a>
                    <button class="btn btn-danger caption-2" onclick="clearHistory()"><i class="ph ph-trash"></i> Очистити базу</button>
                </div>
            </div>
            <div class="table-wrap">
                <table>
-                   <thead class="caption-2"><tr><th>#</th><th>Дата</th><th>Час переходу</th><th>Завершений стан</th><th>Тривалість</th><th>Статус TG</th><th style="text-align: right;">Дія</th></tr></thead>
+                                       <thead class="caption-2"><tr><th>#</th><th>Дата</th><th>Час</th><th>Подія</th><th>Минулий стан</th><th>Статус TG</th><th style="text-align: right;">Дія</th></tr></thead>
                    <tbody class="body-5" id="logTable"></tbody>
                </table>
            </div>
@@ -697,46 +704,46 @@ void handleRoot() {
    }
 
 
-   function renderLogsTable() {
-       let tbody = document.getElementById('logTable');
-       // l.s === false означає перехід у Вимкнено (отже до цього БУЛО СВІТЛО)
-       // l.s === true означає перехід в Увімкнено (отже до цього НЕ БУЛО СВІТЛА)
-       let filtered = logsData.filter(l => {
-           if (currentFilter === 'on') return l.s === false;
-           if (currentFilter === 'off') return l.s === true;
-           return true;
-       });
+       function renderLogsTable() {
+        let tbody = document.getElementById('logTable');
+        let filtered = logsData.filter(l => {
+            if (currentFilter === 'on') return l.s === true;
+            if (currentFilter === 'off') return l.s === false;
+            return true;
+        });
 
+        if (filtered.length === 0) {
+             tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><i class="ph ph-tray"></i><div class="body-2">Журнал порожній</div></div></td></tr>`;
+             return;
+        }
 
-       if (filtered.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><i class="ph ph-tray"></i><div class="body-2">Журнал порожній</div></div></td></tr>`;
-            return;
-       }
-
-
-       let th = '';
-       filtered.forEach(l => {
-           let dt = l.t.split(' ');
-           let wasLightOn = !l.s;
-           let badgeClass = wasLightOn ? 'badge-on' : 'badge-off';
-           let badgeIcon = wasLightOn ? 'ph-check-circle' : 'ph-warning-circle';
-           let badgeText = wasLightOn ? 'Світло було' : 'Світла не було';
-           let tgStatus = l.sent ? '<span style="color: var(--success);"><i class="ph ph-check"></i> Доставлено</span>' : '<span style="color: var(--warning);"><i class="ph ph-clock"></i> В черзі</span>';
-           th += `<tr>
-               <td class="mono-val" style="color: var(--text-muted);">#${l.idx + 1}</td>
-               <td class="mono-val">{dt[1]||''}</td>
-               <td><span class="state-badge caption-4 ${badgeClass}"><i class="ph ${badgeIcon}"></i> ${badgeText}</span></td>
-               <td class="mono-val">${l.d}</td>
-               <td>${tgStatus}</td>
-               <td style="text-align: right;">
-                   <button class="btn-row-del" onclick="deleteLogEntry(${l.idx})" title="Видалити цей запис">
-                       <i class="ph ph-trash"></i>
-                   </button>
-               </td>
-           </tr>`;
-       });
-       tbody.innerHTML = th;
-   }
+        let th = '';
+        filtered.forEach(l => {
+            let dt = l.t.split(' ');
+            let dateStr = dt[0] || '';
+            let timeStr = dt[1] || '';
+            let isLightOn = l.s;
+            let badgeClass = isLightOn ? 'badge-on' : 'badge-off';
+            let badgeIcon = isLightOn ? 'ph-lightbulb' : 'ph-plug';
+            let badgeText = isLightOn ? '🟢 З\'явилося світло' : '🔴 Зникло світло';
+            let durLabel = isLightOn ? 'Не було: ' : 'Було: ';
+            let tgStatus = l.sent ? '<span style="color: var(--success);"><i class="ph ph-check"></i> Доставлено</span>' : '<span style="color: var(--warning);"><i class="ph ph-clock"></i> В черзі</span>';
+            th += `<tr>
+                <td class="mono-val" style="color: var(--text-muted);">#${l.idx + 1}</td>
+                <td class="mono-val">${dateStr}</td>
+                <td class="mono-val">${timeStr}</td>
+                <td><span class="state-badge caption-4 ${badgeClass}"><i class="ph ${badgeIcon}"></i> ${badgeText}</span></td>
+                <td class="mono-val">${durLabel}${l.d}</td>
+                <td>${tgStatus}</td>
+                <td style="text-align: right;">
+                    <button class="btn-row-del" onclick="deleteLogEntry(${l.idx})" title="Видалити цей запис">
+                        <i class="ph ph-trash"></i>
+                    </button>
+                </td>
+            </tr>`;
+        });
+        tbody.innerHTML = th;
+    }
 
 
    function deleteLogEntry(idx) {
@@ -763,7 +770,7 @@ void handleRoot() {
        if (!ds || !de) return;
        let ts = Math.floor(new Date(ds + "T00:00:00").getTime() / 1000), te = Math.floor(new Date(de + "T23:59:59").getTime() / 1000);
       
-       fetch(`/api/report?start={te}`).then(r => r.json()).then(r => {
+       fetch(`/api/report?start=${ts}&end=${te}`).then(r => r.json()).then(r => {
            let total = r.on_sec + r.off_sec;
            let onPct = total > 0 ? ((r.on_sec / total) * 100).toFixed(1) : 0;
            let offPct = total > 0 ? ((r.off_sec / total) * 100).toFixed(1) : 0;
@@ -1057,7 +1064,7 @@ void setup() {
  isInternetConnected = checkInternet();
  lastPingTime = millis();
   delay(9);
- currentState = (digitalRead(SENSOR_PIN) == LOW);
+ currentState = isPowerPresent();
  lastStateChangeTime = time(NULL);
 
 
@@ -1092,7 +1099,7 @@ void loop() {
 
 
  // --- ЛОГІКА ОЧІКУВАННЯ РОУТЕРА ТА ВІДРАХУНКУ ЧАСУ ---
- bool newRead = (digitalRead(SENSOR_PIN) == LOW);
+ bool newRead = isPowerPresent();
   // 1. Початок відліку зміни стану (з базовим антибрязкотом)
  if (newRead != currentState) {
    if (!pendingStateChange) {
