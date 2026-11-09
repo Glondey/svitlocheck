@@ -196,32 +196,93 @@ void loadLogs() {
   }
 }
 
-// ================= ПЕРЕВІРКА ПІНГУ ТА ІНТЕРНЕТУ =================
-void checkInternetAndPing() {
+// ================= ЕНЕРГОЕФЕКТИВНА ПЕРЕВІРКА ПІНГУ ТА ІНТЕРНЕТУ =================
+enum PingStep {
+  PING_IDLE,
+  PING_AWAITING_RETRY
+};
+
+PingStep pingStep = PING_IDLE;
+unsigned long pingRetryWaitStart = 0;
+
+uint16_t probeServerPing() {
+  WiFiClient client;
+  client.setTimeout(1);
+  unsigned long startT = millis();
+
+  // 1. Первинний тест: Cloudflare 1.1.1.1:80 (HTTP порт - блискавичний TCP SYN-ACK, без блокування провайдерами)
+  if (client.connect(IPAddress(1, 1, 1, 1), 80, 700)) {
+    unsigned long rtt = millis() - startT;
+    client.stop();
+    return (rtt > 0) ? (uint16_t)rtt : 1;
+  }
+
+  // 2. Резервний тест: Google DNS 8.8.8.8:53
+  startT = millis();
+  if (client.connect(IPAddress(8, 8, 8, 8), 53, 700)) {
+    unsigned long rtt = millis() - startT;
+    client.stop();
+    return (rtt > 0) ? (uint16_t)rtt : 1;
+  }
+
+  return 0; // Обидві адреси не відповіли
+}
+
+void processPingStateMachine() {
   if (WiFi.status() != WL_CONNECTED) {
     if (isInternetConnected) {
       isInternetConnected = false;
       lastPingMs = 0;
       addNetLog(false, 0);
     }
+    pingStep = PING_IDLE;
+    lastPingCheckTime = millis();
     return;
   }
 
-  WiFiClient client;
-  unsigned long startT = millis();
-  bool ok = client.connect(IPAddress(8, 8, 8, 8), 53, 500);
-  unsigned long rtt = millis() - startT;
-  if (ok) {
-    client.stop();
-    lastPingMs = (rtt > 0) ? (uint16_t)rtt : 1;
-  } else {
-    lastPingMs = 0;
-  }
+  unsigned long now = millis();
 
-  // Тільки в разі зміни стану оновлюємо статус і фіксуємо в журнал розробника
-  if (ok != isInternetConnected) {
-    isInternetConnected = ok;
-    addNetLog(isInternetConnected, lastPingMs);
+  if (pingStep == PING_IDLE) {
+    // 1. Пінгуємо сервер кожні 6 секунд
+    if (now - lastPingCheckTime >= 6000) {
+      lastPingCheckTime = now;
+      uint16_t rtt = probeServerPing();
+      if (rtt > 0) {
+        // Відповів: статус "Є зв'язок", повтор через 6 секунд
+        lastPingMs = rtt;
+        if (!isInternetConnected) {
+          isInternetConnected = true;
+          addNetLog(true, lastPingMs);
+        }
+      } else {
+        // Не відповів з 1-ї спроби: через 1 секунду робимо повторний запит
+        pingStep = PING_AWAITING_RETRY;
+        pingRetryWaitStart = now;
+      }
+    }
+  } else if (pingStep == PING_AWAITING_RETRY) {
+    // 2. Очікуємо рівно 1 секунду без зупинки роботи процесора
+    if (now - pingRetryWaitStart >= 1000) {
+      uint16_t rtt = probeServerPing();
+      if (rtt > 0) {
+        // Відповів при повторній спробі: статус "Є зв'язок"
+        lastPingMs = rtt;
+        if (!isInternetConnected) {
+          isInternetConnected = true;
+          addNetLog(true, lastPingMs);
+        }
+      } else {
+        // Не відповів і вдруге: статус "Немає інтернету"
+        lastPingMs = 0;
+        if (isInternetConnected) {
+          isInternetConnected = false;
+          addNetLog(false, 0);
+        }
+      }
+      // Завершили перевірку, повертаємось до циклу 6 секунд
+      pingStep = PING_IDLE;
+      lastPingCheckTime = millis();
+    }
   }
 }
 
@@ -551,7 +612,7 @@ void handleRoot() {
         <div class="card col-6">
             <div class="card-header"><div><h3 class="title-1 card-title"><i class="ph ph-cpu"></i> Телеметрія мікроконтролера</h3></div><span class="caption-4 mono-val" id="cpuLoad">...</span></div>
             <div class="res-item"><div class="res-label body-5"><span>Температура процесора (ESP32)</span><span class="mono-val" id="tempValText">...</span></div><div class="progress-track"><div class="progress-fill fill-accent" id="tempBar" style="transform: scaleX(0);"></div></div></div>
-            <div class="res-item"><div class="res-label body-5"><span>Пінг до сервера (8.8.8.8)</span><span class="mono-val" id="pingValText">...</span></div><div class="progress-track"><div class="progress-fill fill-success" id="pingBar" style="transform: scaleX(0);"></div></div></div>
+            <div class="res-item"><div class="res-label body-5"><span>Пінг до сервера</span><span class="mono-val" id="pingValText">...</span></div><div class="progress-track"><div class="progress-fill fill-success" id="pingBar" style="transform: scaleX(0);"></div></div></div>
             <div class="res-item"><div class="res-label body-5"><span>Оперативна пам'ять (RAM)</span><span class="mono-val" id="ramUsageText">...</span></div><div class="progress-track"><div class="progress-fill fill-accent" id="ramBar" style="transform: scaleX(0);"></div></div></div>
             <div class="res-item"><div class="res-label body-5"><span>Wi-Fi сигнал (<span style="color: var(--accent);" id="wifiSsid">...</span>)</span><span class="mono-val" id="wifiSignalText">...</span></div><div class="progress-track"><div class="progress-fill fill-warning" id="wifiBar" style="transform: scaleX(0);"></div></div></div>
         </div>
@@ -879,7 +940,7 @@ void handleRoot() {
             }
 
             // 4. Пінг до сервера та статус інтернету
-            let pingStr = (q.p > 0) ? (q.p + ' ms') : 'Таймаут';
+            let pingStr = (q.p > 0) ? (q.p + ' ms') : 'Немає зв\'язку';
             document.getElementById('pingValText').innerText = pingStr;
             let pBar = document.getElementById('pingBar');
             if (q.p > 0) {
@@ -897,12 +958,14 @@ void handleRoot() {
                     intEl.style.color = "var(--success)";
                     dotEl.className = "dot dot-online";
                 } else {
-                    intEl.innerText = "Відсутній";
+                    intEl.innerText = "Немає інтернету";
                     intEl.style.color = "var(--danger)";
                     dotEl.className = "dot dot-offline";
                 }
             } else if (q.i) {
                 document.getElementById('sysInternet').innerText = "Є зв'язок (" + (q.p > 0 ? q.p + " ms" : "OK") + ")";
+            } else {
+                document.getElementById('sysInternet').innerText = "Немає інтернету";
             }
 
             // Якщо змінилась кількість логів
@@ -1183,7 +1246,7 @@ void handleRoot() {
             document.getElementById('devTempBadge').innerText = d.chipTemp + ' °C';
         }
         if (d.ping !== undefined) {
-            document.getElementById('devPingBadge').innerText = (d.ping > 0) ? (d.ping + ' ms') : 'Відсутній';
+            document.getElementById('devPingBadge').innerText = (d.ping > 0) ? (d.ping + ' ms') : 'Немає зв\'язку';
         }
 
         // Рендеринг журналу перегріву (>68°C)
@@ -1210,7 +1273,7 @@ void handleRoot() {
             } else {
                 let html = '';
                 nLogs.forEach((item, idx) => {
-                    let badge = item.c ? '<span class="state-badge badge-on" style="padding:2px 8px;">🟢 Є зв\'язок</span>' : '<span class="state-badge badge-off" style="padding:2px 8px;">🔴 Відсутній</span>';
+                    let badge = item.c ? '<span class="state-badge badge-on" style="padding:2px 8px;">🟢 Є зв\'язок</span>' : '<span class="state-badge badge-off" style="padding:2px 8px;">🔴 Немає інтернету</span>';
                     let pStr = item.c ? (item.p + ' ms') : '---';
                     html += `<tr><td>#${idx + 1}</td><td>${item.t}</td><td>${badge}</td><td>${pStr}</td></tr>`;
                 });
@@ -1524,10 +1587,17 @@ void setup() {
   unsigned long startNtp = millis();
   while (time(NULL) < 1000000000 && millis() - startNtp < 20000) {
     delay(200);
-    if (millis() % 2000 < 200) checkInternetAndPing();
   }
 
-  checkInternetAndPing();
+  uint16_t initPing = probeServerPing();
+  if (initPing > 0) {
+    isInternetConnected = true;
+    lastPingMs = initPing;
+    addNetLog(true, initPing);
+  } else {
+    isInternetConnected = false;
+    lastPingMs = 0;
+  }
   lastPingCheckTime = millis();
   if (time(NULL) > 1000000000) {
     lastStateChangeTime = time(NULL);
@@ -1583,12 +1653,13 @@ void setup() {
 void loop() {
   server.handleClient();
 
-  // --- ПЕРЕВІРКА ПІНГУ ТА ІНТЕРНЕТУ КОЖНІ 5 СЕКУНД ---
-  if (millis() - lastPingCheckTime >= 5000) {
-    lastPingCheckTime = millis();
-    checkInternetAndPing();
+  // --- ЕНЕРГОЕФЕКТИВНА ПЕРЕВІРКА ПІНГУ ТА ІНТЕРНЕТУ (6с / повтор 1с) ---
+  processPingStateMachine();
 
-    // Моніторинг температури на перевищення 68°C для журналу розробника
+  // --- МОНІТОРИНГ ТЕМПЕРАТУРИ ПРОЦЕСОРА (ПЕРЕГРІВ > 68°C) КОЖНІ 5 СЕКУНД ---
+  static unsigned long lastTempCheckMs = 0;
+  if (millis() - lastTempCheckMs >= 5000) {
+    lastTempCheckMs = millis();
     float currentChipTemp = temperatureRead();
     static bool wasOverheatState = false;
     static unsigned long lastOverheatLogMs = 0;
