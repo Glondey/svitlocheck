@@ -20,8 +20,8 @@ void applyDeviceHostname();
 String escapeHtml(const String& s);
 
 // ================= КОРИСТУВАЦЬКІ НАЛАШТУВАННЯ =================
-#define FIRMWARE_VERSION "v2.5.2" // Поточна версія прошивки
-#define AP_PASSWORD "12345678"    // Пароль точки доступу Wi-Fi (ESP32 AP / WiFiManager, мін. 8 символів або "" для відкритої мережі)
+#define FIRMWARE_VERSION "v2.5.3" // Поточна версія прошивки
+#define AP_PASSWORD "1294F272"    // Пароль точки доступу Wi-Fi (ESP32 AP / WiFiManager, мін. 8 символів або "" для відкритої мережі)
 #define SENSOR_PIN 18            // GPIO пін датчика (якщо ESP32 підключено до USB, краще GPIO 18)
 #define SENSOR_ACTIVE_LOW true  // true: LOW = світло є, HIGH = світла немає (стандарт для оптопар)
 #define NTP_SERVER "pool.ntp.org"
